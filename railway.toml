@@ -1,4 +1,3 @@
 [build]
 builder = "dockerfile"
-dockerfilePath = "agent/Dockerfile"
-buildContext = "agent"
+dockerfilePath = "Dockerfile"

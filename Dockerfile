@@ -9,11 +9,11 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Copy and install Python packages
-COPY requirements.txt .
+COPY agent/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your code
-COPY . /app
+# Copy agent code
+COPY agent/ /app/
 
 # healthcheck.py is now copied with the rest of the code
 
