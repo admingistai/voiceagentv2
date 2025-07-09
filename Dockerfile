@@ -18,4 +18,4 @@ COPY agent/ /app/
 # healthcheck.py is now copied with the rest of the code
 
 ENV PORT=8080
-CMD python healthcheck.py & python main.py prod
+CMD python healthcheck.py & python main.py
