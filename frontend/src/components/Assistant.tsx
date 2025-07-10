@@ -51,6 +51,9 @@ export default function Assistant({ title, logo, onConnect }: AssistantProps) {
   const { localParticipant } = useLocalParticipant();
   const [currentVoiceId, setCurrentVoiceId] = useState<string>("");
   const [showVoices, setShowVoices] = useState(true);
+  const [isVoiceChanging, setIsVoiceChanging] = useState(false);
+  const [pendingVoiceId, setPendingVoiceId] = useState<string>("");
+  const [voiceChangeTimeout, setVoiceChangeTimeout] = useState<NodeJS.Timeout | null>(null);
   const windowSize = useWindowResize();
   const {
     agent: agentParticipant,
@@ -82,6 +85,20 @@ export default function Assistant({ title, logo, onConnect }: AssistantProps) {
     }
   }, [agentAttributes?.voices]);
 
+  // Listen for agent speech to detect voice change completion
+  useEffect(() => {
+    if (agentState === 'speaking' && isVoiceChanging) {
+      console.log('✅ Voice change completed - agent is speaking');
+      // Clear the timeout
+      if (voiceChangeTimeout) {
+        clearTimeout(voiceChangeTimeout);
+        setVoiceChangeTimeout(null);
+      }
+      setIsVoiceChanging(false);
+      setPendingVoiceId("");
+    }
+  }, [agentState, isVoiceChanging, voiceChangeTimeout]);
+
   const subscribedVolumes = useMultibandTrackVolume(
     agentAudioTrack?.publication.track,
     barCount
@@ -101,12 +118,58 @@ export default function Assistant({ title, logo, onConnect }: AssistantProps) {
 
   const onSelectVoice = useCallback(
     (voiceId: string) => {
+      // Don't allow voice changes while one is in progress
+      if (isVoiceChanging) {
+        console.log('⚠️ Voice change already in progress, ignoring new request');
+        return;
+      }
+      
       setCurrentVoiceId(voiceId);
-      localParticipant.setAttributes({
-        voice: voiceId,
-      });
+      setIsVoiceChanging(true);
+      setPendingVoiceId(voiceId);
+      
+      // Clear any existing timeout
+      if (voiceChangeTimeout) {
+        clearTimeout(voiceChangeTimeout);
+      }
+      
+      try {
+        const metadata = JSON.stringify({
+          voiceId: voiceId,
+        });
+        
+        console.log(`🔄 Setting voice metadata: ${metadata}`);
+        localParticipant.setMetadata(metadata);
+        
+        // Set timeout for voice change acknowledgment (10 seconds)
+        const timeout = setTimeout(() => {
+          console.warn('⏰ Voice change timeout: Agent did not acknowledge voice change within 10 seconds');
+          setIsVoiceChanging(false);
+          setPendingVoiceId("");
+        }, 10000);
+        
+        setVoiceChangeTimeout(timeout);
+        
+      } catch (error) {
+        console.error('❌ Failed to set voice metadata:', error);
+        
+        if (error instanceof Error) {
+          if (error.message.includes('permission')) {
+            console.error('⚠️ Permission denied: Unable to change voice settings. Please check your participant permissions.');
+          } else if (error.message.includes('connection')) {
+            console.error('⚠️ Connection error: Unable to communicate voice change to server. Please check your connection.');
+          } else {
+            console.error(`⚠️ Unexpected error during voice change: ${error.message}`);
+          }
+        }
+        
+        // Reset states on error
+        setIsVoiceChanging(false);
+        setPendingVoiceId("");
+        setCurrentVoiceId("");
+      }
     },
-    [localParticipant, setCurrentVoiceId]
+    [localParticipant, setCurrentVoiceId, isVoiceChanging, voiceChangeTimeout]
   );
 
   const audioTileContent = useMemo(() => {
@@ -254,14 +317,28 @@ export default function Assistant({ title, logo, onConnect }: AssistantProps) {
                     onClick={() => {
                       onSelectVoice(voice.id);
                     }}
-                    className={`w-full text-left px-3 py-2 font-mono text-lg md:text-sm ${
+                    disabled={isVoiceChanging}
+                    className={`w-full text-left px-3 py-2 font-mono text-lg md:text-sm relative ${
                       voice.id === currentVoiceId
                         ? "bg-foreground text-background"
                         : "hover:bg-white/10"
+                    } ${
+                      isVoiceChanging ? "opacity-50 cursor-not-allowed" : ""
+                    } ${
+                      pendingVoiceId === voice.id && isVoiceChanging
+                        ? "bg-yellow-500/20 border-l-2 border-yellow-500"
+                        : ""
                     }`}
                     key={voice.id}
                   >
-                    {voice.name}
+                    <div className="flex items-center justify-between">
+                      <span>{voice.name}</span>
+                      {pendingVoiceId === voice.id && isVoiceChanging && (
+                        <div className="ml-2">
+                          <LoadingSVG diameter={16} strokeWidth={2} />
+                        </div>
+                      )}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -270,7 +347,7 @@ export default function Assistant({ title, logo, onConnect }: AssistantProps) {
         )}
       </div>
     );
-  }, [isAgentConnected, voices, currentVoiceId, onSelectVoice]);
+  }, [isAgentConnected, voices, currentVoiceId, onSelectVoice, isVoiceChanging, pendingVoiceId]);
 
   return (
     <>

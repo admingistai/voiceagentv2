@@ -62,39 +62,47 @@ async def entrypoint(ctx: JobContext):
     is_user_speaking = False
     is_agent_speaking = False
 
-    @ctx.room.on("participant_attributes_changed")
-    def on_participant_attributes_changed(
-        changed_attributes: dict[str, str], participant: rtc.Participant
+    @ctx.room.on("participant_metadata_changed")
+    def on_participant_metadata_changed(
+        participant: rtc.Participant, old_metadata: str, new_metadata: str
     ):
-        # check for attribute changes from the user itself
+        # check for metadata changes from the user itself
         if participant.kind != rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD:
             return
 
-        if "voice" in changed_attributes:
-            voice_id = participant.attributes.get("voice")
+        try:
+            data = json.loads(new_metadata or "{}")
+            voice_id = data.get("voiceId")
             logger.info(
-                f"participant {participant.identity} requested voice change: {voice_id}"
+                f"participant {participant.identity} metadata changed: {new_metadata}"
             )
-            if not voice_id:
-                return
-
-            voice_data = next(
-                (voice for voice in cartesia_voices if voice["id"] == voice_id), None
-            )
-            if not voice_data:
-                logger.warning(f"Voice {voice_id} not found")
-                return
-            if "embedding" in voice_data:
-                language = "en"
-                if "language" in voice_data and voice_data["language"] != "en":
-                    language = voice_data["language"]
-                tts._opts.voice = voice_data["embedding"]
-                tts._opts.language = language
-                # allow user to confirm voice change as long as no one is speaking
-                if not (is_agent_speaking or is_user_speaking):
-                    asyncio.create_task(
-                        agent.say("How do I sound now?", allow_interruptions=True)
-                    )
+            
+            if voice_id:
+                logger.info(
+                    f"participant {participant.identity} requested voice change: {voice_id}"
+                )
+                
+                voice_data = next(
+                    (voice for voice in cartesia_voices if voice["id"] == voice_id), None
+                )
+                if not voice_data:
+                    logger.warning(f"Voice {voice_id} not found")
+                    return
+                if "embedding" in voice_data:
+                    language = "en"
+                    if "language" in voice_data and voice_data["language"] != "en":
+                        language = voice_data["language"]
+                    tts._opts.voice = voice_data["embedding"]
+                    tts._opts.language = language
+                    logger.info(f"🔄 Switched voice to {voice_id}")
+                    # allow user to confirm voice change as long as no one is speaking
+                    if not (is_agent_speaking or is_user_speaking):
+                        asyncio.create_task(
+                            agent.say("How do I sound now?", allow_interruptions=True)
+                        )
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse metadata JSON: {new_metadata}")
+            pass
 
     await ctx.connect()
 
